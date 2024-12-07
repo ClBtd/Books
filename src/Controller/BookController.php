@@ -3,34 +3,43 @@
 namespace App\Controller;
 
 use App\Entity\Books;
-use App\Entity\User;
 use App\Repository\AuthorRepository;
 use App\Repository\BooksRepository;
 use Doctrine\ORM\EntityManagerInterface;
-use Lexik\Bundle\JWTAuthenticationBundle\Encoder\JWTEncoderInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
 use Symfony\Component\Serializer\SerializerInterface;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Contracts\Cache\ItemInterface;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
 
 class BookController extends AbstractController
 {
     #[Route('/api/books', name: 'book', methods: ['GET'])]
-    public function getBookList(BooksRepository $bookRepository, SerializerInterface $serializer): JsonResponse
+    #[IsGranted('ROLE_USER', message:'Vous devez être connectés pour accéder à cette page.')]
+    public function getBookList(BooksRepository $bookRepository, SerializerInterface $serializer, Request $request, TagAwareCacheInterface $booksCache): JsonResponse
     {
-        
+        $page = $request->get('page', 1);
+        $limit = $request->get('limit', 5);
+        $idCache = "getBookList-$page-$limit";
 
-        $bookList = $bookRepository->findAll();
-        $jsonBookList = $serializer->serialize($bookList, 'json', ['groups' => 'getBooks']);
+        $jsonBookList = $booksCache->get($idCache, function (ItemInterface $item) use ($bookRepository, $page, $limit, $serializer) {
+            $item->tag("booksCache");
+            $bookList =  $bookRepository->findAllWithPagination($page, $limit);
+            return $serializer->serialize($bookList, 'json', ['groups' => 'getBooks']);
+        });
+
         return new JsonResponse($jsonBookList, Response::HTTP_OK, [], true);
     }
 
     #[Route('/api/books/{id}', name: 'detailBook', methods: ['GET'])]
+    #[IsGranted('ROLE_USER', message:'Vous devez être connectés pour accéder à cette page.')]
     public function getDetailBook(SerializerInterface $serializer, ?Books $book): JsonResponse {
 
         if ($book) {
@@ -41,9 +50,11 @@ class BookController extends AbstractController
     }
 
     #[Route('/api/books/{id}', name: 'deleteBook', methods: ['DELETE'])]
-    public function deleteBook(SerializerInterface $serializer, ?Books $book, EntityManagerInterface $em): JsonResponse {
+    #[IsGranted('ROLE_ADMIN', message:'Vous devez être administrateur.ice pour accéder à cette page.')]
+    public function deleteBook(?Books $book, EntityManagerInterface $em, TagAwareCacheInterface $booksCache): JsonResponse {
 
         if ($book) {
+            $booksCache->invalidateTags(["booksCache"]);
             $em->remove($book);
             $em->flush();
             return new JsonResponse(null, Response::HTTP_NO_CONTENT);
@@ -52,6 +63,7 @@ class BookController extends AbstractController
     }
 
     #[Route('/api/books', name:"createBook", methods: ['POST'])]
+    #[IsGranted('ROLE_ADMIN', message:'Vous devez être administrateur.ice pour accéder à cette page.')]
     public function createBook(Request $request, SerializerInterface $serializer, EntityManagerInterface $em, UrlGeneratorInterface $urlGenerator, AuthorRepository $authorRepository, ValidatorInterface $validator): JsonResponse 
     {
 
@@ -76,6 +88,7 @@ class BookController extends AbstractController
    }
 
     #[Route('/api/books/{id}', name:"updateBook", methods:['PUT'])]
+    #[IsGranted('ROLE_ADMIN', message:'Vous devez être administrateur.ice pour accéder à cette page.')]
     public function updateBook(Request $request, SerializerInterface $serializer, Books $currentBook, EntityManagerInterface $em, AuthorRepository $authorRepository): JsonResponse 
     {
         $updatedBook = $serializer->deserialize($request->getContent(), 

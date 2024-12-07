@@ -11,21 +11,34 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
 use Symfony\Component\Serializer\SerializerInterface;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Contracts\Cache\ItemInterface;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
 
 class AuthorController extends AbstractController
 {
     #[Route('/api/author', name: 'author', methods: ['GET'])]
-    public function getAllAuthors(AuthorRepository $authorRepository, SerializerInterface $serializer): JsonResponse
+    #[IsGranted('ROLE_USER', message:'Vous devez être connectés pour accéder à cette page.')]
+    public function getAllAuthors(AuthorRepository $authorRepository, SerializerInterface $serializer, Request $request, TagAwareCacheInterface $authorsCache): JsonResponse
     {
-        $authorList = $authorRepository->findAll();
-        $jsonAuthorList = $serializer->serialize($authorList, 'json', ['groups' => 'authors']);
+        $page = $request->get('page', 1);
+        $limit = $request->get('limit', 5);
+        $idCache = "getAllAuthors-$page-$limit";
+
+        $jsonAuthorList = $authorsCache->get($idCache, function (ItemInterface $item) use ($authorRepository, $page, $limit, $serializer) {
+            $item->tag("authorsCache");
+            $authorList =  $authorRepository->findAllWithPagination($page, $limit);
+            return $serializer->serialize($authorList, 'json', ['groups' => 'getBooks']);
+        });
+
         return new JsonResponse($jsonAuthorList, Response::HTTP_OK, [], true);
     }
 
     #[Route('/api/author/{id}', name: 'detailAuthor', methods: ['GET'])]
+    #[IsGranted('ROLE_USER', message:'Vous devez être connectés pour accéder à cette page.')]
     public function getDetailBook(int $id, SerializerInterface $serializer, Author $author): JsonResponse {
 
         if ($author) {
@@ -36,9 +49,11 @@ class AuthorController extends AbstractController
    }
 
    #[Route('/api/author/{id}', name: 'deleteAuthor', methods: ['DELETE'])]
-    public function deleteBook(SerializerInterface $serializer, ?Author $author, EntityManagerInterface $em): JsonResponse {
+   #[IsGranted('ROLE_ADMIN', message:'Vous devez être administrateur.ice pour accéder à cette page.')]
+    public function deleteBook(SerializerInterface $serializer, ?Author $author, EntityManagerInterface $em, TagAwareCacheInterface $authorsCache): JsonResponse {
 
         if ($author) {
+            $authorsCache->invalidateTags(["authorsCache"]);
             $em->remove($author);
             $em->flush();
             return new JsonResponse(null, Response::HTTP_NO_CONTENT);
@@ -47,6 +62,7 @@ class AuthorController extends AbstractController
     }
 
     #[Route('/api/author', name:"createAuthor", methods: ['POST'])]
+    #[IsGranted('ROLE_ADMIN', message:'Vous devez être administrateur.ice pour accéder à cette page.')]
     public function createAuthor(Request $request, SerializerInterface $serializer, EntityManagerInterface $em, UrlGeneratorInterface $urlGenerator, ValidatorInterface $validator): JsonResponse 
     {
 
@@ -66,6 +82,7 @@ class AuthorController extends AbstractController
     }
 
     #[Route('/api/author/{id}', name:"updateAuthor", methods:['PUT'])]
+    #[IsGranted('ROLE_ADMIN', message:'Vous devez être administrateur.ice pour accéder à cette page.')]
     public function updateAuthor(Request $request, SerializerInterface $serializer, Author $currentAuthor, EntityManagerInterface $em): JsonResponse 
     {
         $updatedAuthor = $serializer->deserialize($request->getContent(), 

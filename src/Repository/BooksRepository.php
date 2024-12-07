@@ -16,6 +16,14 @@ class BooksRepository extends ServiceEntityRepository
         parent::__construct($registry, Books::class);
     }
 
+    public function findAllWithPagination (int $page, int $limit) : array
+    {
+        $qb = $this->createQueryBuilder('b')
+            ->setFirstResult(($page-1)*$limit)
+            ->setMaxResults($limit);
+        return $qb->getQuery()->getResult();
+    }
+
     //    /**
     //     * @return Books[] Returns an array of Books objects
     //     */
